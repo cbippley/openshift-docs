@@ -1196,6 +1196,16 @@ Targeting {product-title} 4.15, the OpenShift SDN CNI network plugin will not be
 
 * Before this update, the remote write endpoint for a user workload monitoring Prometheus pods did not have custom CA bundles injected so that the endpoint could not be protected using SSL. With this update, the trusted CA bundle has been added to user workload monitoring Prometheus pods so that users can secure the remote write endpoint using SSL. (link:https://issues.redhat.com/browse/OCPBUGS-11958[*OCPBUGS-11958*])
 
+* With this release, as a security measure, Cross Origin Resource Sharing (CORS) headers are now disabled by default for Thanos Querier. If you still need to use CORS headers, you can enable them by setting the value of the `enableCORS` parameter to `true` for the `ThanosQuerierConfig` resource. (link:https://issues.redhat.com/browse/OCPBUGS-11889[*OCPBUGS-11889*])
+
+* Before this update, the `btrfs` collector of node-exporter was always enabled, which caused increased CPU usage because Red Hat Enterprise Linux does not support the`btrfs` storage format. With this update, the `btrfs` collector is now disabled, thereby resolving the issue. (link:https://issues.redhat.com/browse/OCPBUGS-11434[*OCPBUGS-11434*])
+
+* Before this update, for the `cluster:capacity_cpu_cores:sum` metric, nodes with the`infra` role but not `master` role were not assigned a value of `infra` for the `label_node_role_kubernetes_io` label. With this update, nodes with the `infra` role but not `master` role are now correctly labeled as `infra` for this metric. (link:https://issues.redhat.com/browse/OCPBUGS-10387[*OCPBUGS-10387*])
+
+* Before this update, the lack of a startup probe prevented the Prometheus Adapter pods from starting when the Kubernetes API had many custom resource definitions installed because the program initialization would take longer than what was allowed by the liveness probe. With this update, the Prometheus Adapter pods are now configured with a startup probe that waits five minutes before failing, thereby resolving the issue. (link:https://issues.redhat.com/browse/OCPBUGS-7694[*OCPBUGS-7694*])
+
+* Before this update, the `node-exporter` collector did not exclude Calico Virtual NICs when collecting network interface metrics. This update adds the `cali[a-f0-9]*` value to the`collector.netclass.ignored-devices` list to ensure that metrics are not collected for Calico Virtual NICs. (link:https://issues.redhat.com/browse/OCPBUGS-7282[*OCPBUGS-7282*])
+
 [discrete]
 [id="ocp-4-14-networking-bug-fixes"]
 ==== Networking
