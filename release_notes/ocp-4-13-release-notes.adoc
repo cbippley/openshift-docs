@@ -4108,3 +4108,38 @@ $ oc adm release info 4.13.41 --pullspecs
 [id="ocp-4-13-41-updating"]
 ==== Updating
 To update an existing {product-title} 4.13 cluster to this latest release, see xref:../updating/updating-cluster-cli.adoc#updating-cluster-cli[Updating a cluster using the CLI].
+
+[id="ocp-4-13-42"]
+=== RHSA-2024:2875 - {product-title} 4.13.42 bug fix update
+
+Issued: 2024-05-22
+
+{product-title} release 4.13.42, which includes security updates, is now available. The list of bug fixes that are included in the update is documented in the link:https://access.redhat.com/errata/RHSA-2024:2875[RHSA-2024:2875] advisory. The RPM packages that are included in the update are provided by the link:https://access.redhat.com/errata/RHSA-2024:2877[RHSA-2024:2877] advisory.
+
+Space precluded documenting all of the container images for this release in the advisory.
+
+You can view the container images in this release by running the following command:
+
+[source,terminal]
+----
+$ oc adm release info 4.13.42 --pullspecs
+----
+
+[id="ocp-4-13-42-bug-fixes"]
+==== Bug fixes
+//wordsmith
+* Previously, Before this update, for the `cluster:capacity_cpu_cores:sum` metric, nodes with the`infra` role but not `master` role were not assigned a value of `infra` for the `label_node_role_kubernetes_io` label. With this update, nodes with the `infra` role but not `master` role are now correctly labeled as `infra` for this metric.(link:https://issues.redhat.com/browse/OCPBUGS-33581[*OCPBUGS-33581*])
+
+* https://issues.redhat.com/browse/OCPBUGS-33448
+
+* https://issues.redhat.com/browse/OCPBUGS-33280
+
+* https://issues.redhat.com/browse/OCPBUGS-33252
+
+* https://issues.redhat.com/browse/OCPBUGS-33174
+
+* https://issues.redhat.com/browse/OCPBUGS-33062
+
+[id="ocp-4-13-42-updating"]
+==== Updating
+To update an existing {product-title} 4.13 cluster to this latest release, see xref:../updating/updating-cluster-cli.adoc#updating-cluster-cli[Updating a cluster using the CLI].
