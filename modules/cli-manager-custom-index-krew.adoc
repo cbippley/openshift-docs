@@ -1,0 +1,59 @@
+// Module included in the following assemblies:
+//
+// * cli_reference/cli_manager/cli-manager-install.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="cli-manager-custom-index_{context}"]
+= Adding the CLI Manager custom index to Krew
+
+Use the terminal to add the CLI manager custom index to Krew.
+
+.Prerequisites
+
+* link:https://krew.sigs.k8s.io/docs/user-guide/setup/install[Krew is installed].
+* The CLI Manager is installed.
+* You are using {product-title} 4.17 or later.
+
+.Procedure
+
+. Get the route.
+
+[source,terminal]
+----
+oc get route/openshift-cli-manager -n openshift-cli-manager-operator -o=jsonpath='{.spec.host}'
+----
+
+. Name the custom index.
+
+[source,terminal]
+----
+# <CUSTOM_INDEX_NAME>=ocp
+----
+
+. Add the custom index to Krew.
+
+[source,terminal]
+----
+# oc krew index add $<CUSTOM_INDEX_NAME> https://$ROUTE/cli-manager
+----
+
+.. If you see certificate errors add
+
+[source,terminal]
+----
+# echo "$(oc config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 --decode)" | sudo tee /etc/pki/ca-trust/source/anchors/cli.crt > /dev/null
+----
+
+.. Update the certificate authority.
+
+[source,terminal]
+----
+# sudo update-ca-trust
+----
+
+.. Update Krew.
+
+[source,terminal]
+----
+# oc krew update
+----
