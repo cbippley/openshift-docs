@@ -1,0 +1,97 @@
+// Module included in the following assemblies:
+//
+// * ai_workloads/jobset_operator/managing-jobset.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="js-volume-claim-policies_{context}"]
+= Configuring volume claim policies for {js-operator}
+
+[role="_abstract"]
+You can configure a JobSet to automatically create and manage shared PersistentVolumeClaims (PVCs) across multiple ReplicatedJobs. This is useful for workloads that require shared access to datasets, models, or checkpoints.
+
+.Prerequisites
+
+* You have the {js-operator} installed in your cluster.
+* You have access to the cluster with `cluster-admin` privileges.
+* You have defined the storage requirements for your workload.
+
+.Procedure
+
+. Define the volume templates in the `spec.volumeClaimPolicies` section of your JobSet YAML file.
++
+[source,yaml]
+----
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+spec:
+  volumeClaimPolicies:
+    - templates:
+        - metadata:
+            name: <volume_mounts_name>
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 1Gi
+----
++
+where:
++
+--
+`name`:: The name used here must match the `volumeMounts.name` in your container specification.
+--
+
+[NOTE]
+----
+To keep data after the JobSet is deleted, set the `retentionPolicy.whenDeleted` field to `Retain`.
+----
+
+. In your `replicatedJobs` configuration, add a `volumeMount` that matches the template name defined in step 1.
++
+[source,yaml]
+----
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+    - name: node
+      template:
+        spec:
+          template:
+            spec:
+              containers:
+                - name: node
+                  image: busybox
+                  volumeMounts:
+                    - mountPath: /workspace/checkpoints
+                      name: checkpoints
+----
++
+where:
++
+--
+`name: checkpoints`:: JobSet automatically creates the PVC and injects it into the pod.
+--
+
+. Apply the JobSet configuration:
++
+[source,terminal]
+----
+$ oc apply -f jobset.yaml
+----
+
+.Verification
+
+. Verify that the PVCs were created using the naming convention `<claim_name>-<jobset_name>`:
++
+[source,terminal]
+----
+$ oc get pvc
+----
++
+.Example output
+[source,terminal]
+----
+NAME          STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+pvc-1       Bound    pvc-385996a0-70af-4791-aa8e-9e6459e6b123   3Gi        RWO            file-storage   3d
+pvc-2       Bound    pvc-8aeddd4d-aad5-4039-8d04-640a71c9a72d   12Gi       RWO            file-storage   3d
+pvc-3       Bound    pvc-0050144d-940c-4c4e-a23a-2a660a5490eb   12Gi       RWO            file-storage   3d
+----
