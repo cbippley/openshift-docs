@@ -1,0 +1,187 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-aws-provider-config_{context}"]
+= Configure AWS KMS provider
+
+[role="_abstract"]
+You can configure the AWS KMS provider to encrypt etcd data using AWS Key Management Service with IAM role-based authentication.
+
+.Prerequisites
+
+* You have access to an AWS account with permissions to create KMS keys and IAM roles.
+* You have deployed an {product-title} cluster on AWS.
+* Control plane instances have network connectivity to the AWS KMS service endpoint.
+
+.Procedure
+
+. Create an AWS KMS key in the AWS Management Console or using the AWS CLI:
++
+[source,terminal]
+----
+$ aws kms create-key --description "OpenShift etcd encryption key"
+----
++
+Note the key ID or ARN from the command output.
+
+. Discover the IAM role attached to your control plane instances:
++
+[source,terminal]
+----
+$ aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=*-master-*" \
+  --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' \
+  --output text
+----
++
+The command output shows the instance profile ARN.
+Extract the role name from the ARN path (the segment after `instance-profile/`).
+
+. Configure the KMS key policy to allow control plane instances to use the key.
+Add the following policy statement to your KMS key policy:
++
+[source,json]
+----
+{
+  "Sid": "Allow control plane instances to use the key",
+  "Effect": "Allow",
+  "Principal": {
+    "AWS": "arn:aws:iam::<account-id>:role/<control-plane-instance-role>"
+  },
+  "Action": [
+    "kms:Encrypt",
+    "kms:Decrypt",
+    "kms:DescribeKey"
+  ],
+  "Resource": "*"
+}
+----
++
+Replace `<account-id>` with your AWS account ID and `<control-plane-instance-role>` with the IAM role name discovered in the previous step.
+
+. Create a static pod manifest for the AWS KMS plugin on each control plane node:
++
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kms-plugin
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  containers:
+  - name: aws-kms-plugin
+    image: quay.io/openshift/aws-encryption-provider:latest
+    command:
+    - /aws-encryption-provider
+    args:
+    - --key=arn:aws:kms:<region>:<account-id>:key/<key-id>
+    - --region=<region>
+    - --listen=/var/run/kmsplugin/kms.sock
+    env:
+    - name: AWS_REGION
+      value: <region>
+    volumeMounts:
+    - name: kmsplugin
+      mountPath: /var/run/kmsplugin
+    securityContext:
+      privileged: true
+  volumes:
+  - name: kmsplugin
+    hostPath:
+      path: /var/run/kmsplugin
+      type: DirectoryOrCreate
+  priorityClassName: system-node-critical
+----
++
+Replace `<region>`, `<account-id>`, and `<key-id>` with your AWS KMS key details.
+
+. For disconnected or restricted network environments, configure VPC endpoints for AWS KMS:
++
+[source,terminal]
+----
+$ aws ec2 create-vpc-endpoint \
+  --vpc-id <vpc-id> \
+  --service-name com.amazonaws.<region>.kms \
+  --vpc-endpoint-type Interface \
+  --subnet-ids <control-plane-subnet-1> <control-plane-subnet-2> <control-plane-subnet-3> \
+  --security-group-ids <control-plane-security-group>
+----
++
+Replace `<vpc-id>` with your VPC ID, `<region>` with your AWS region, `<control-plane-subnet-*>` with the subnet IDs where your control plane nodes are deployed, and `<control-plane-security-group>` with a security group that allows outbound HTTPS traffic.
++
+Verify DNS resolution routes to the VPC endpoint:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# nslookup kms.<region>.amazonaws.com
+----
++
+The resolved IP address should be a private IP from your VPC, not a public AWS IP.
++
+Test connectivity to the VPC endpoint:
++
+[source,terminal]
+----
+sh-4.4# curl -v https://kms.<region>.amazonaws.com
+----
++
+You should receive an HTTP response from the AWS KMS service, not a connection timeout or DNS resolution failure.
+
+. Save the static pod manifest to `/etc/kubernetes/manifests/kms-plugin.yaml` on each control plane node.
+
+Verify the KMS plugin is running:
+
+. Check the KMS plugin pod status:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system | grep kms-plugin
+----
+
+. Check the KMS plugin logs for successful AWS KMS connection:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms_plugin_pod_name>
+----
++
+Look for log messages indicating successful authentication and connection to AWS KMS.
+
+. Test KMS plugin connectivity by checking the socket:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# ls -l /var/run/kmsplugin/kms.sock
+----
+
+If the KMS plugin fails to connect to AWS KMS, check the following:
+
+IAM permissions:: Verify the control plane instance IAM role has `kms:Encrypt`, `kms:Decrypt`, and `kms:DescribeKey` permissions for the KMS key.
+
+Network connectivity:: Ensure control plane instances can reach the AWS KMS service endpoint. Check VPC security groups and network ACLs.
+
+KMS key policy:: Verify the KMS key policy allows the control plane instance role to use the key.
+
+AWS credentials:: If using static credentials instead of IAM roles, verify the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables are set correctly.
+
+[IMPORTANT]
+====
+Using IAM roles for control plane instances is the recommended authentication method for AWS KMS.
+Static credentials require additional secret management and rotation processes.
+====

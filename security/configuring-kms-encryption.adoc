@@ -1,0 +1,54 @@
+:_mod-docs-content-type: ASSEMBLY
+[id="configuring-kms-encryption"]
+= Securing cluster data with external key management
+include::_attributes/common-attributes.adoc[]
+:context: configuring-kms-encryption
+
+toc::[]
+
+[role="_abstract"]
+You can integrate {product-title} with external Key Management Service (KMS) providers to encrypt etcd data at rest while maintaining centralized key custody outside the cluster.
+
+// Parent topic - Entry point for KMS encryption
+include::modules/kms-encryption-parent-topic.adoc[leveloffset=+1]
+
+// Discovery - What providers are available?
+include::modules/kms-supported-providers.adoc[leveloffset=+1]
+
+// Discovery - Tech Preview limitations and roadmap
+include::modules/kms-v2-tech-preview-limitations.adoc[leveloffset=+1]
+
+// Prerequisites - Before you begin
+include::modules/kms-encryption-prerequisites.adoc[leveloffset=+1]
+
+// Plugin deployment
+include::modules/kms-v2-plugin-deployment-static-pod.adoc[leveloffset=+1]
+
+// Provider-specific configuration
+include::modules/kms-v2-aws-provider-config.adoc[leveloffset=+1]
+
+include::modules/kms-v2-azure-provider-config.adoc[leveloffset=+1]
+
+include::modules/kms-v2-vault-provider-config.adoc[leveloffset=+1]
+
+// APIServer configuration
+include::modules/kms-v2-apiserver-configuration.adoc[leveloffset=+1]
+
+include::modules/kms-v2-verifying.adoc[leveloffset=+1]
+
+// Monitoring and maintenance
+include::modules/kms-v2-monitoring-status.adoc[leveloffset=+1]
+
+include::modules/kms-encryption-troubleshooting.adoc[leveloffset=+1]
+
+// Key management
+include::modules/kms-encryption-key-rotation.adoc[leveloffset=+1]
+
+include::modules/kms-encryption-disabling.adoc[leveloffset=+1]
+
+[role="_additional-resources"]
+.Additional resources
+
+* xref:../etcd/etcd-encrypt.adoc#etcd-encrypt[Enabling etcd encryption]
+* link:https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/[Kubernetes documentation - Using a KMS provider for data encryption]
+* link:https://github.com/openshift/enhancements/blob/master/enhancements/kube-apiserver/kms-encryption-foundations.md[OpenShift Enhancement Proposal - KMS Encryption Foundations]

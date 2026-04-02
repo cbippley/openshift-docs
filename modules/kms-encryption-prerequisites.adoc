@@ -1,0 +1,38 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: REFERENCE
+[id="kms-encryption-prerequisites_{context}"]
+= Prerequisites for KMS encryption
+
+[role="_abstract"]
+Before you configure KMS encryption, you must prepare your cluster, deploy an external KMS provider, and ensure network connectivity between control plane nodes and the KMS provider.
+
+.Cluster requirements
+
+* You have access to the cluster as a user with the `cluster-admin` role.
+* The `TechPreviewNoUpgrade` feature gate is acceptable for your environment. This feature gate blocks cluster upgrades while KMS encryption is enabled.
+* You have created a recent backup of the etcd database.
+* You have access to all control plane nodes to deploy the KMS plugin.
+
+.KMS provider requirements
+
+* A KMS v2-compatible provider is deployed and accessible from control plane nodes.
+* The KMS provider supports the Kubernetes KMS v2 protocol specification.
+* The KMS provider has sufficient capacity to handle encryption and decryption requests from all API servers.
+* The KMS provider is configured with high availability to prevent cluster failures if the provider becomes unavailable.
+
+.Network requirements
+
+* Control plane nodes can establish network connections to the KMS provider endpoint.
+* Firewall rules permit outbound connections from control plane nodes to the KMS provider on the required ports.
+* DNS resolution is configured for the KMS provider hostname if using a DNS-based endpoint.
+* Network latency between control plane nodes and the KMS provider is less than 100ms to avoid API server timeout issues.
+
+.Authentication requirements
+
+* AWS KMS: IAM role attached to control plane instances, or AWS access keys with KMS permissions
+* Azure Key Vault: Managed identity assigned to control plane VMs, or service principal with Key Vault access
+* HashiCorp Vault: AppRole credentials, token, or Kubernetes authentication mount
+* Custom provider: Provider-specific authentication as required by the KMS v2 plugin

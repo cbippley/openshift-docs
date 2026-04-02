@@ -1,0 +1,92 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: REFERENCE
+[id="kms-supported-providers_{context}"]
+= Supported KMS providers
+
+[role="_abstract"]
+{product-title} supports multiple KMS providers for external key management, including OpenShift-maintained forks of upstream plugins and community-supported solutions.
+
+== OpenShift-maintained providers
+
+OpenShift maintains forks of the following KMS plugins with tested compatibility for {product-title}:
+
+.OpenShift-maintained KMS providers
+[cols="2,3,2,2",options="header"]
+|===
+|Provider
+|Repository
+|Authentication
+|Best for
+
+|AWS KMS
+|link:https://github.com/openshift/aws-encryption-provider[openshift/aws-encryption-provider]
+|IAM role or static credentials
+|AWS cloud deployments
+
+|Azure Key Vault
+|link:https://github.com/openshift/azure-kubernetes-kms[openshift/azure-kubernetes-kms]
+|Managed identity or service principal
+|Azure cloud deployments
+|===
+
+These providers are forked from upstream Kubernetes community plugins and are tested with {product-title} release cycles.
+
+== Community-supported providers
+
+The following community-maintained KMS plugins are compatible with Kubernetes KMS v2 and can be used with {product-title}:
+
+.Community-supported KMS providers
+[cols="2,3,2,2",options="header"]
+|===
+|Provider
+|Repository
+|Authentication
+|Best for
+
+|HashiCorp Vault
+|link:https://github.com/FalcoSuessgott/vault-kubernetes-kms[vault-kubernetes-kms]
+|AppRole, token, or Kubernetes auth
+|On-premise and multi-cloud deployments
+|===
+
+Community-supported providers are not maintained by Red Hat and may require additional configuration or troubleshooting.
+
+== Custom and third-party providers
+
+You can deploy custom or third-party KMS v2 plugins that comply with the Kubernetes KMS v2 protocol specification.
+Custom plugins must expose a Unix socket endpoint at `/var/run/kmsplugin/kms.sock` and implement the KMS v2 gRPC interface.
+
+When evaluating custom KMS providers, consider:
+
+* Protocol compliance with Kubernetes KMS v2 specification
+* High availability and failover capabilities
+* Performance characteristics and latency requirements
+* Support and maintenance commitments
+* Compliance certifications (FIPS, Common Criteria, HSM integration)
+
+== Planned future support
+
+The following KMS providers are planned for future OpenShift releases:
+
+* Google Cloud KMS (GCP KMS)
+* IBM Cloud Key Protect
+* Additional HSM-backed providers
+
+== Provider selection criteria
+
+When selecting a KMS provider for your deployment, consider the following factors:
+
+Cloud versus on-premise:: Cloud-based providers (AWS KMS, Azure Key Vault) require internet connectivity. On-premise solutions (Vault) work in disconnected environments.
+
+HSM integration:: Providers that support Hardware Security Module backends offer FIPS 140-2 Level 3 validation for highly regulated environments.
+
+Compliance certifications:: Verify that your chosen provider meets regulatory requirements for your industry (PCI-DSS, HIPAA, FedRAMP, SOC 2).
+
+High availability:: Ensure the provider supports multi-region or multi-AZ deployments to prevent single points of failure.
+
+Performance and latency:: KMS providers must respond to encryption requests within API server timeout windows (typically 3 seconds).
+
+Cost:: Cloud-based KMS providers charge per API request and may incur significant costs for high-volume clusters.

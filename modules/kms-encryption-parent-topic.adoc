@@ -1,0 +1,64 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: CONCEPT
+[id="kms-encryption-parent-topic_{context}"]
+= Securing cluster data with external key management
+
+[role="_abstract"]
+You can integrate {product-title} with external Key Management Service (KMS) providers to encrypt etcd data at rest while maintaining centralized key custody outside the cluster.
+This enables you to meet regulatory requirements for external key management and Hardware Security Module (HSM) integration while avoiding compliance violations and security audit failures.
+
+External KMS providers encrypt the keys that protect your etcd data using envelope encryption.
+In this model, {product-title} generates data encryption keys (DEKs) to encrypt actual data, while your external KMS provider manages key encryption keys (KEKs) that protect the DEKs.
+The KEKs never leave your KMS provider, ensuring that encryption keys remain under centralized external control.
+
+== How external key management works
+
+When you enable KMS encryption, {product-title} follows this workflow:
+
+. {product-title} generates a DEK to encrypt sensitive data in etcd
+. The DEK is sent to your external KMS provider for encryption with the KEK
+. The encrypted DEK is stored in etcd alongside the encrypted data
+. When data needs to be decrypted, {product-title} sends the encrypted DEK to the KMS provider
+. The KMS provider decrypts the DEK and returns it to {product-title}
+. {product-title} uses the plain text DEK to decrypt the data
+
+This envelope encryption model provides several security benefits:
+
+* The KEK is managed externally and never exposed to the cluster
+* You can use HSMs or cloud-based KMS services for FIPS-validated encryption
+* Centralized key management and auditing through your KMS provider
+* Enhanced compliance with regulatory requirements like PCI-DSS, HIPAA, FedRAMP, and SOC 2
+
+== External key management compared to local encryption
+
+{product-title} supports two types of etcd encryption at rest:
+
+Local encryption (aescbc or aesgcm):: Encryption keys are generated and stored within the cluster.
+This provides data-at-rest protection but does not meet regulatory requirements for external key management.
+
+KMS encryption:: Encryption keys are managed by an external KMS provider.
+This meets compliance requirements for centralized key custody and HSM integration.
+
+Both encryption types protect the same resources: Secrets, ConfigMaps, Routes, OAuth access tokens, and OAuth authorize tokens.
+Neither type encrypts resource types, namespaces, or object names.
+
+== Tech Preview limitations
+
+KMS encryption is available as a Technology Preview feature in {product-title} {ocp-nplus1}.
+The Technology Preview implementation includes the following limitations:
+
+* Manual KMS plugin deployment is required on control plane nodes
+* The `TechPreviewNoUpgrade` feature gate blocks cluster upgrades while KMS encryption is enabled
+* You must migrate to local encryption before upgrading or downgrading the cluster
+* Automatic key rotation is not available; you must perform manual key rotation
+* KMS-to-KMS provider migration is not supported
+
+Future General Availability releases will include managed plugin lifecycle, automatic key rotation, and removal of the upgrade restriction.
+
+.Additional resources
+
+* xref:../security/encrypting-etcd.adoc#encrypting-etcd[Enabling etcd encryption]
+* link:https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/[Kubernetes documentation - Using a KMS provider for data encryption]

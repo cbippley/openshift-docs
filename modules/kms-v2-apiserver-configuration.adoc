@@ -1,0 +1,179 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-apiserver-configuration_{context}"]
+= Configure APIServer for KMS encryption
+
+[role="_abstract"]
+You can enable KMS encryption by configuring the APIServer resource to use the KMS plugin deployed on control plane nodes.
+
+.Prerequisites
+
+* You have deployed the KMS plugin on all control plane nodes.
+* You have enabled the `TechPreviewNoUpgrade` feature gate and all nodes have restarted to apply the feature set.
+The feature gate must be enabled BEFORE deploying KMS plugins or enabling KMS encryption in the APIServer configuration.
+* You have verified the KMS plugin socket exists at `/var/run/kmsplugin/kms.sock` on all control plane nodes.
+* You have verified the KMS plugin can successfully communicate with the external KMS provider by checking plugin logs for successful authentication and connection messages.
+* You have verified the KMS plugin pods are running on all control plane nodes: `oc get pods -n kube-system -l name=kms-plugin -o wide` should show one `Running` pod per control plane node.
+* You have created a recent backup of the etcd database.
+
+.Procedure
+
+. Configure the APIServer resource to enable KMS encryption:
++
+[source,terminal]
+----
+$ oc get nodes
+----
++
+All nodes should show `Ready` status after the feature gate is applied.
+
+. Configure the APIServer resource to use KMS encryption:
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "kms"
+    }
+  }
+}'
+----
++
+This triggers the migration from local encryption (if enabled) or unencrypted state to KMS encryption.
+
+. Monitor the encryption migration progress by checking the APIServer operator conditions for both OpenShift and Kubernetes API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="Encrypted")]}{.reason}{"\n"}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="Encrypted")]}{.reason}{"\n"}{.message}{"\n"}'
+----
++
+The encryption migration process can take several minutes to complete depending on the number of secrets and ConfigMaps in your cluster.
+Both API server instances must complete encryption before KMS encryption is fully active.
+
+. Check for KMS plugin degradation conditions:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="KMSPluginDegraded")]}{.status}{"\n"}{.message}{"\n"}'
+----
++
+The `KMSPluginDegraded` condition should show `False` when the KMS plugin is healthy.
+
+. Verify the encryption type is set to KMS:
++
+[source,terminal]
+----
+$ oc get apiserver cluster -o jsonpath='{.spec.encryption.type}'
+----
++
+The output should show `kms`.
+
+Verify the encryption migration is complete for both OpenShift and Kubernetes API servers:
+
+. Check the OpenShift API server encryption status:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{"\n"}{.reason}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{"\n"}{.reason}{"\n"}'
+----
++
+The `EncryptionCompleted` condition should show `True` with reason `EncryptionCompleted` for both API servers.
+
+. Check the kube-apiserver pods are running on all control plane nodes:
++
+[source,terminal]
+----
+$ oc get pods -n openshift-kube-apiserver
+----
++
+All kube-apiserver pods should show `Running` status.
+
+. Verify the API server can communicate with the KMS plugin by creating a test secret:
++
+[source,terminal]
+----
+$ oc create secret generic kms-test --from-literal=key=value -n default
+----
++
+If the secret is created successfully, the KMS plugin is working correctly.
+
+[WARNING]
+====
+Cluster upgrades and downgrades are blocked while the `TechPreviewNoUpgrade` feature gate is enabled.
+To upgrade your cluster, you must first migrate from KMS encryption back to local encryption (aescbc), then disable the feature gate.
+====
+
+[IMPORTANT]
+====
+After enabling KMS encryption, you must maintain access to the KMS provider.
+Loss of access will prevent the API server from decrypting data and will result in cluster failure.
+Ensure your KMS provider is deployed with high availability and that you have backup KMS credentials stored securely.
+====
+
+If the KMS encryption migration fails or the API server becomes degraded, check the KMS plugin status:
+
+. Verify the KMS plugin pods are running on all control plane nodes:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system -l name=kms-plugin -o wide
+----
++
+All KMS plugin pods should show `Running` status.
+
+. Verify network connectivity to the KMS provider by checking KMS plugin logs:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms-plugin-pod-name>
+----
++
+Look for authentication or connection errors.
+
+. If the issue cannot be resolved immediately, revert to the previous encryption state:
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "aescbc"
+    }
+  }
+}'
+----
++
+This reverts encryption to local `aescbc` mode.
+
+. Monitor the reversion progress:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+Wait for both API servers to complete the migration reversion.
+
+. After resolving the KMS plugin or provider connectivity issue, retry enabling KMS encryption.

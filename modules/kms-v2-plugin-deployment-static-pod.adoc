@@ -1,0 +1,243 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-plugin-deployment-static-pod_{context}"]
+= Deploy KMS plugin as static pod
+
+[role="_abstract"]
+You can deploy a KMS plugin as a static pod on control plane nodes to enable communication between the API server and your external KMS provider.
+
+.Prerequisites
+
+* You have access to the cluster as a user with the `cluster-admin` role.
+* You have obtained the KMS plugin container image for your provider.
+* You have configured authentication credentials for your KMS provider.
+* You have enabled the `TechPreviewNoUpgrade` feature gate and all nodes have restarted to apply the feature set.
+
+.Procedure
+
+. Enable the `TechPreviewNoUpgrade` feature gate for KMS encryption:
++
+[source,terminal]
+----
+$ oc patch featuregate cluster --type merge -p '
+{
+  "spec": {
+    "featureSet": "TechPreviewNoUpgrade"
+  }
+}'
+----
++
+This enables Technology Preview features, including KMS encryption support.
++
+[IMPORTANT]
+====
+The feature gate must be enabled before deploying KMS plugins.
+The KMS v2 plugin API requires this feature gate to be active.
+====
+
+. Wait for the feature gate to be applied and all nodes to restart:
++
+[source,terminal]
+----
+$ oc get nodes
+----
++
+Monitor the cluster until all nodes return to `Ready` status.
+This can take 10-20 minutes as each node restarts to apply the new feature set.
+
+. List control plane nodes:
++
+[source,terminal]
+----
+$ oc get nodes -l node-role.kubernetes.io/master
+----
++
+You must deploy the KMS plugin on each control plane node shown.
+
+. Create the KMS plugin socket directory on each control plane node:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# mkdir -p /var/run/kmsplugin
+----
++
+[source,terminal]
+----
+sh-4.4# chmod 755 /var/run/kmsplugin
+----
++
+[IMPORTANT]
+====
+The KMS plugin socket path `/var/run/kmsplugin/kms.sock` is hard-coded in the Technology Preview implementation.
+Do not change this path or the API server will not be able to communicate with the plugin.
+====
+
+. Create a static pod manifest for the KMS plugin in `/etc/kubernetes/manifests/` on each control plane node.
++
+.. Access the control plane node:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+.. Create the static pod manifest file using the following example for AWS KMS:
++
+[source,terminal]
+----
+sh-4.4# cat > /etc/kubernetes/manifests/kms-plugin.yaml <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kms-plugin
+  namespace: kube-system
+  labels:
+    name: kms-plugin
+spec:
+  hostNetwork: true
+  containers:
+  - name: kms-plugin
+    image: quay.io/openshift/aws-encryption-provider:v4.17
+    command:
+    - /aws-encryption-provider
+    args:
+    - --key=<aws-kms-key-arn>
+    - --region=<aws-region>
+    - --listen=/var/run/kmsplugin/kms.sock
+    env:
+    - name: AWS_REGION
+      value: <aws-region>
+    volumeMounts:
+    - name: kmsplugin
+      mountPath: /var/run/kmsplugin
+    securityContext:
+      privileged: true
+  volumes:
+  - name: kmsplugin
+    hostPath:
+      path: /var/run/kmsplugin
+      type: DirectoryOrCreate
+  priorityClassName: system-node-critical
+EOF
+----
++
+Replace `<aws-kms-key-arn>` with your AWS KMS key ARN and `<aws-region>` with your AWS region.
++
+.. Exit the debug session:
++
+[source,terminal]
+----
+sh-4.4# exit
+----
++
+[source,terminal]
+----
+sh-4.4# exit
+----
++
+.. Repeat this process for each control plane node in the cluster.
+
+. For Azure Key Vault or HashiCorp Vault providers, modify the static pod manifest according to your provider's requirements.
+Refer to the provider-specific configuration procedures for detailed examples.
+
+. Wait for the static pod to start on each control plane node:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system -l name=kms-plugin -o wide
+----
++
+Expected output (success):
+----
+NAME                         READY   STATUS    RESTARTS   AGE   NODE
+kms-plugin-master-0          1/1     Running   0          2m    master-0
+kms-plugin-master-1          1/1     Running   0          2m    master-1
+kms-plugin-master-2          1/1     Running   0          2m    master-2
+----
++
+If no pods are shown, check that the static pod manifest exists in `/etc/kubernetes/manifests/` on each control plane node.
+
+. Verify the KMS plugin socket is created:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# stat -c '%a %U:%G' /var/run/kmsplugin/kms.sock
+----
++
+The socket file should have permissions `660` or `666` and be accessible to the user running the kube-apiserver process (typically UID 0).
++
+Expected output:
+----
+660 root:root
+----
+
+. Check the KMS plugin pod logs for successful startup:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms_plugin_pod_name>
+----
++
+Look for log messages indicating successful connection to the KMS provider.
+
+. Verify the KMS plugin can communicate with the external KMS provider by checking for successful health check responses in the logs.
+
+[NOTE]
+====
+The static pod manifest must be deployed on all control plane nodes before you enable KMS encryption in the APIServer configuration.
+If any control plane node is missing the KMS plugin, the API server on that node will fail to start after KMS encryption is enabled.
+====
+
+[IMPORTANT]
+====
+Before proceeding to enable KMS encryption in the APIServer configuration, verify that the KMS plugin pod is running on ALL control plane nodes:
+
+[source,terminal]
+----
+$ oc get pods -n kube-system -l name=kms-plugin -o wide
+----
+
+Ensure one pod per control plane node shows `Running` status.
+If deployment fails on any node, remove the static pod manifest from all control plane nodes before attempting to fix and redeploy:
+
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# rm /etc/kubernetes/manifests/kms-plugin.yaml
+----
+====
+
+[IMPORTANT]
+====
+Store the KMS plugin configuration and provider credentials securely.
+These are required for disaster recovery and cluster restoration.
+====

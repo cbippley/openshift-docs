@@ -1,0 +1,226 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-azure-provider-config_{context}"]
+= Configure Azure Key Vault provider
+
+[role="_abstract"]
+You can configure the Azure Key Vault provider to encrypt etcd data using Azure Key Vault with managed identity authentication.
+
+.Prerequisites
+
+* You have access to an Azure subscription with permissions to create Key Vault instances and managed identities.
+* You have deployed an {product-title} cluster on Azure.
+* Control plane VMs have network connectivity to Azure Key Vault service endpoints.
+
+.Procedure
+
+. Create an Azure Key Vault instance:
++
+[source,terminal]
+----
+$ az keyvault create \
+  --name <key-vault-name> \
+  --resource-group <resource-group> \
+  --location <location>
+----
++
+Note the Key Vault URL from the command output.
+
+. Create an encryption key in the Key Vault:
++
+[source,terminal]
+----
+$ az keyvault key create \
+  --vault-name <key-vault-name> \
+  --name etcd-encryption-key \
+  --protection software
+----
++
+For HSM-backed keys, use `--protection hsm` instead of `--protection software`.
+
+. Configure the managed identity for control plane VMs.
+If you deployed {product-title} on Azure with managed identities enabled, verify the identity is assigned to control plane VMs:
++
+[source,terminal]
+----
+$ az vm identity show \
+  --resource-group <resource-group> \
+  --name <control-plane-vm-name>
+----
+
+. Retrieve the managed identity object ID:
++
+[source,terminal]
+----
+$ az vm identity show \
+  --resource-group <resource-group> \
+  --name <control-plane-vm-name> \
+  --query principalId \
+  --output tsv
+----
++
+Note the object ID from the command output.
+You will use this value in the next step.
+
+. Grant the managed identity access to the Key Vault:
++
+[source,terminal]
+----
+$ az keyvault set-policy \
+  --name <key-vault-name> \
+  --object-id <managed-identity-object-id> \
+  --key-permissions encrypt decrypt get
+----
++
+Replace `<managed-identity-object-id>` with the object ID retrieved in the previous step.
+
+. Create a static pod manifest for the Azure KMS plugin on each control plane node:
++
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kms-plugin
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  containers:
+  - name: azure-kms-plugin
+    image: quay.io/openshift/azure-kubernetes-kms:latest
+    command:
+    - /azure-kms-provider
+    args:
+    - --listen=/var/run/kmsplugin/kms.sock
+    - --keyvault-name=<key-vault-name>
+    - --key-name=etcd-encryption-key
+    - --key-version=
+    env:
+    - name: AZURE_TENANT_ID
+      value: <tenant-id>
+    - name: AZURE_USE_MANAGED_IDENTITY
+      value: "true"
+    volumeMounts:
+    - name: kmsplugin
+      mountPath: /var/run/kmsplugin
+    securityContext:
+      privileged: true
+  volumes:
+  - name: kmsplugin
+    hostPath:
+      path: /var/run/kmsplugin
+      type: DirectoryOrCreate
+  priorityClassName: system-node-critical
+----
++
+Replace `<key-vault-name>` and `<tenant-id>` with your Azure Key Vault and tenant details.
+Leave `--key-version` empty to use the latest key version.
+
+. For disconnected or restricted network environments, configure private endpoints for Azure Key Vault:
++
+Use private endpoints for fully disconnected environments where control plane VMs have no internet access.
+For environments with internet access but requiring source IP filtering, service endpoints are sufficient.
++
+Create the private endpoint:
++
+[source,terminal]
+----
+$ az network private-endpoint create \
+  --resource-group <resource-group> \
+  --name <endpoint-name> \
+  --vnet-name <vnet-name> \
+  --subnet <subnet-name> \
+  --private-connection-resource-id <key-vault-resource-id> \
+  --group-id vault \
+  --connection-name <connection-name>
+----
++
+Create a Private DNS Zone for the private endpoint:
++
+[source,terminal]
+----
+$ az network private-dns zone create \
+  --resource-group <resource-group> \
+  --name privatelink.vaultcore.azure.net
+----
++
+Link the DNS zone to your VNet:
++
+[source,terminal]
+----
+$ az network private-dns link vnet create \
+  --resource-group <resource-group> \
+  --zone-name privatelink.vaultcore.azure.net \
+  --name <dns-link-name> \
+  --virtual-network <vnet-name> \
+  --registration-enabled false
+----
++
+Verify DNS resolution routes to the private endpoint:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# nslookup <key-vault-name>.vault.azure.net
+----
++
+The resolved IP address should be a private IP from your VNet, not a public Azure IP.
+
+. Save the static pod manifest to `/etc/kubernetes/manifests/kms-plugin.yaml` on each control plane node.
+
+Verify the KMS plugin pod is running:
+
+. Check the KMS plugin pod status:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system | grep kms-plugin
+----
+
+. Check the KMS plugin logs for successful Azure Key Vault connection:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms-plugin-pod-name>
+----
++
+Look for log messages indicating successful authentication with managed identity and connection to Azure Key Vault.
+
+. Test KMS plugin connectivity by checking the socket:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# ls -l /var/run/kmsplugin/kms.sock
+----
+
+If the KMS plugin fails to connect to Azure Key Vault, check the following:
+
+Managed identity assignment:: Verify the managed identity is assigned to control plane VMs and has the correct object ID.
+
+Key Vault access policy:: Ensure the managed identity has `encrypt`, `decrypt`, and `get` key permissions in the Key Vault access policy.
+
+Network connectivity:: Verify control plane VMs can reach the Azure Key Vault service endpoint. Check network security groups and routes.
+
+Key Vault firewall:: If Key Vault firewall is enabled, add the control plane subnet to the allowed networks.
+
+Service principal authentication:: If using service principal instead of managed identity, verify `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` environment variables are set correctly.
+
+[NOTE]
+====
+Using managed identity for control plane VMs is the recommended authentication method for Azure Key Vault.
+Service principal authentication requires additional secret management and rotation processes.
+====

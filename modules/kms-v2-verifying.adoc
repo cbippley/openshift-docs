@@ -1,0 +1,140 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-verifying_{context}"]
+= Verify KMS encryption
+
+[role="_abstract"]
+You can verify that KMS encryption is working correctly by checking APIServer operator conditions, querying etcd for encrypted data, and testing encryption operations.
+
+.Prerequisites
+
+* You have configured the APIServer resource to use KMS encryption.
+* The encryption migration has completed.
+
+.Procedure
+
+. Verify all API server resources are encrypted:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{"\n"}{.message}{"\n"}'
+----
++
+The condition should show `True` status with a message indicating all resources are encrypted.
+
+. Check that the KMS plugin is not degraded:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="KMSPluginDegraded")]}{.status}{"\n"}{.message}{"\n"}'
+----
++
+The condition should show `False` status.
+
+. Create a test secret to verify KMS encryption:
++
+[source,terminal]
+----
+$ oc create secret generic kms-verification-test --from-literal=key=value -n default
+----
+
+. Query etcd to verify the secret is encrypted:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# export ETCDCTL_API=3
+----
++
+Identify the etcd peer certificate for this node:
++
+[source,terminal]
+----
+sh-4.4# ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.crt
+----
++
+Note the certificate filename and use it in the following command.
++
+[source,terminal]
+----
+sh-4.4# CERT_FILE=$(ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.crt | head -n 1)
+sh-4.4# KEY_FILE=$(ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.key | head -n 1)
+sh-4.4# etcdctl get /kubernetes.io/secrets/default/kms-verification-test \
+  --endpoints=https://localhost:2379 \
+  --cacert=/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
+  --cert=$CERT_FILE \
+  --key=$KEY_FILE
+----
++
+The output should show encrypted binary data, not plain text values.
+
+. Verify the encrypted data contains the KMS encryption prefix:
++
+The encrypted secret should begin with `k8s:enc:kms:v2:` followed by the KMS provider name.
+This indicates the secret is encrypted using KMS v2.
+
+. Check KMS plugin logs for successful encryption operations:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms-plugin-pod-name> | grep -i encrypt
+----
++
+You should see log messages indicating successful encrypt and decrypt operations.
+
+. Delete the test secret:
++
+[source,terminal]
+----
+$ oc delete secret kms-verification-test -n default
+----
+
+Verify that all existing secrets are encrypted with KMS:
+
+. Check the encryption status of all secrets:
++
+[source,terminal]
+----
+$ oc get secrets --all-namespaces -o json | \
+  jq -r '.items[] | select(.metadata.annotations["encryption.kubernetes.io/state"] != null) | .metadata.name + " - " + .metadata.annotations["encryption.kubernetes.io/state"]'
+----
++
+All secrets should show `encrypted` status.
+
+. Check the encryption migration controller progress for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{"\n"}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{"\n"}{.message}{"\n"}'
+----
++
+The condition should show `False` status for both API servers, indicating migration is complete.
+
+[NOTE]
+====
+The encryption verification process only confirms that new and re-encrypted data is stored with KMS encryption.
+To ensure all data is encrypted, you must trigger a migration by changing the encryption type or performing a manual migration.
+====
+
+[IMPORTANT]
+====
+Store the verification results and KMS plugin logs for audit and compliance purposes.
+These records demonstrate that encryption is functioning correctly and may be required for regulatory compliance.
+====

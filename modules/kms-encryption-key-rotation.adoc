@@ -1,0 +1,205 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-encryption-key-rotation_{context}"]
+= Rotate KMS encryption keys
+
+[role="_abstract"]
+You can rotate encryption keys in your external KMS provider and trigger re-encryption of etcd data to use the new key.
+
+.Prerequisites
+
+* You have configured KMS encryption.
+* You have access to your external KMS provider to create new keys.
+* You have created a recent backup of the etcd database.
+
+.Procedure
+
+. Create a new encryption key in your external KMS provider.
++
+For AWS KMS:
++
+[source,terminal]
+----
+$ aws kms create-key --description "OpenShift etcd encryption key rotated"
+----
++
+For Azure Key Vault:
++
+[source,terminal]
+----
+$ az keyvault key create \
+  --vault-name <key-vault-name> \
+  --name etcd-encryption-key-rotated \
+  --protection software
+----
++
+For HashiCorp Vault:
++
+[source,terminal]
+----
+$ vault write -f transit/keys/etcd-encryption-rotated
+----
++
+Note the new key ID or ARN.
+
+. Update the KMS key policy or access policy to allow control plane instances to use the new key.
++
+For AWS KMS, update the key policy as described in the AWS provider configuration procedure.
++
+For Azure Key Vault, grant the managed identity access to the new key:
++
+[source,terminal]
+----
+$ az keyvault set-policy \
+  --name <key-vault-name> \
+  --object-id <managed-identity-object-id> \
+  --key-permissions encrypt decrypt get
+----
++
+For HashiCorp Vault, the existing policy should already allow access to the new key.
+
+. Update the KMS plugin configuration to use the new key.
++
+For static pod deployments, edit the static pod manifest on each control plane node to reference the new key:
++
+[source,yaml]
+----
+args:
+- --key=<new-key-id-or-arn>
+----
++
+For AWS KMS, replace `<new-key-id-or-arn>` with the new KMS key ARN.
++
+For Azure Key Vault, replace `<new-key-id-or-arn>` with the new key name.
++
+For HashiCorp Vault, update the `--vault-key-name` argument with the new key name.
+
+. Restart the KMS plugin pods to apply the new configuration:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# crictl stop <kms-plugin-container-id>
+----
++
+The static pod will automatically restart with the new configuration.
+
+. Trigger re-encryption by updating the APIServer encryption configuration:
++
+[WARNING]
+====
+This procedure temporarily switches encryption from KMS to local `aescbc` encryption and back to KMS to force re-encryption with the new key.
+This causes API server restarts on all control plane nodes and may cause temporary service interruption.
+Schedule this operation during a maintenance window.
+
+During the intermediate `aescbc` state, secrets are encrypted locally rather than with the external KMS provider.
+If your compliance requirements mandate continuous external key custody, consult with your security team before performing this procedure.
+====
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "aescbc"
+    }
+  }
+}'
+----
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "kms"
+    }
+  }
+}'
+----
++
+This triggers a migration that re-encrypts all data with the new KMS key.
+
+. Monitor the re-encryption progress for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+Wait for the migration to complete on both API servers.
+
+. Verify all resources are re-encrypted with the new key for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+The condition should show `True` status for both API servers.
+
+. After successful re-encryption, optionally delete or disable the old key in your KMS provider according to your key retention policy.
+
+Create a test secret to verify encryption with the new key:
+
+. Test the encryption with the new key:
++
+[source,terminal]
+----
+$ oc create secret generic key-rotation-test --from-literal=key=value -n default
+----
+
+. Verify the secret is encrypted:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# export ETCDCTL_API=3
+sh-4.4# CERT_FILE=$(ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.crt | head -n 1)
+sh-4.4# KEY_FILE=$(ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.key | head -n 1)
+sh-4.4# etcdctl get /kubernetes.io/secrets/default/key-rotation-test \
+  --endpoints=https://localhost:2379 \
+  --cacert=/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
+  --cert=$CERT_FILE \
+  --key=$KEY_FILE
+----
++
+The output should show encrypted data.
+
+. Delete the test secret:
++
+[source,terminal]
+----
+$ oc delete secret key-rotation-test -n default
+----
+
+[NOTE]
+====
+Automatic key rotation is not available in the Technology Preview release.
+You must perform manual key rotation by creating a new key, updating the KMS plugin configuration, and triggering re-encryption.
+Future General Availability releases will support automatic key rotation with background re-encryption.
+====
+
+[IMPORTANT]
+====
+Key rotation is a critical security operation.
+Ensure you have tested the rotation procedure in a non-production environment before performing it in production.
+Maintain backups of both the old and new keys until you have verified successful re-encryption and tested cluster operations.
+====

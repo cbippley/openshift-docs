@@ -1,0 +1,156 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-configuring_{context}"]
+= Configuring KMS v2 encryption
+
+[role="_abstract"]
+You can configure Kubernetes Key Management Service (KMS) v2 encryption to protect sensitive data stored in etcd by integrating with an external key management provider.
+
+.Prerequisites
+
+* You have access to the cluster as a user with the `cluster-admin` role.
+* You have configured and deployed a KMS v2-compatible provider that is accessible from the control plane nodes.
+* You have the KMS provider endpoint URL and authentication credentials.
+* You have created a recent backup of the etcd database.
+
+.Procedure
+
+. Create the KMS provider configuration file on each control plane node:
++
+[source,yaml]
+----
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+      - configmaps
+    providers:
+      - kms:
+          apiVersion: v2
+          name: <kms-provider-name> <1>
+          endpoint: unix:///var/run/kmsplugin/socket.sock <2>
+          timeout: 3s <3>
+      - identity: {} <4>
+----
+<1> The name of your KMS provider.
+<2> The Unix socket endpoint where the KMS plugin listens. This must match the socket path configured in your KMS plugin deployment.
+<3> Optional timeout for KMS operations. Default is 3 seconds.
+<4> The identity provider allows reading existing unencrypted data.
+
+. Deploy the KMS plugin on each control plane node:
++
+The KMS plugin must run as a process or container on each control plane node and expose a Unix socket that the API server can communicate with.
++
+.. Create a systemd unit file or DaemonSet to run the KMS plugin.
+.. Configure the plugin with your KMS provider credentials and endpoint.
+.. Ensure the plugin socket is accessible at the path specified in the encryption configuration.
+
+. Create or update the API server encryption configuration:
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "aescbc"
+    }
+  }
+}'
+----
+
+. Apply the KMS encryption configuration by creating an `APIServer` encryption configuration:
++
+[source,terminal]
+----
+$ oc create configmap kms-encryption-config \
+  --from-file=encryption-config.yaml \
+  -n openshift-config
+----
+
+. Update the API server to use the KMS encryption configuration:
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "kms"
+    }
+  }
+}'
+----
+
+. Monitor the encryption migration process:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="Encrypted")]}{.reason}{"\n"}{.message}{"\n"}'
+----
++
+The encryption process can take several minutes to complete depending on the number of secrets and configmaps in your cluster.
+
+. Verify that all resources are encrypted:
++
+[source,terminal]
+----
+$ oc get secrets --all-namespaces -o json | jq '.items[].metadata.annotations["encryption.kubernetes.io/state"]'
+----
++
+All secrets should show `encrypted` or `encrypted-kms` status.
+
+Verify the KMS plugin is running on all control plane nodes:
+
+. Check the KMS plugin pod status:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# systemctl status kms-plugin
+----
+
+. Check the API server logs for KMS-related messages:
++
+[source,terminal]
+----
+$ oc logs -n openshift-kube-apiserver <kube-apiserver-pod> | grep -i kms
+----
+
+. Verify encryption by creating a test secret:
++
+[source,terminal]
+----
+$ oc create secret generic kms-test --from-literal=key=value -n default
+----
+
+. Verify the secret is encrypted in etcd:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# export ETCDCTL_API=3
+sh-4.4# etcdctl get /kubernetes.io/secrets/default/kms-test \
+  --endpoints=https://localhost:2379 \
+  --cacert=/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
+  --cert=/etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-<node>.crt \
+  --key=/etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-<node>.key
+----
++
+The output should show encrypted data, not plain text.
+
+[NOTE]
+====
+After enabling KMS encryption, you must maintain access to the KMS provider. Loss of access will prevent the API server from decrypting data and will result in cluster failure.
+====
+
+[IMPORTANT]
+====
+Store the KMS provider credentials and configuration securely. These are required for disaster recovery and cluster restoration.
+====

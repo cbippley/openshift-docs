@@ -1,0 +1,162 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-encryption-disabling_{context}"]
+= Disable KMS encryption
+
+[role="_abstract"]
+You can migrate from KMS encryption to local encryption to prepare for cluster upgrades or to remove the dependency on external KMS providers.
+
+.Prerequisites
+
+* You have configured KMS encryption.
+* The KMS plugin is running and can communicate with the KMS provider. You cannot migrate from KMS encryption if the plugin is unavailable.
+* You have created a recent backup of the etcd database.
+
+.Procedure
+
+. Migrate from KMS encryption to local encryption (aescbc):
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "aescbc"
+    }
+  }
+}'
+----
++
+This triggers migration from KMS encryption to local aescbc encryption.
+
+. Monitor the migration progress for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+The migration can take several minutes depending on the number of secrets and ConfigMaps in your cluster.
+
+. Verify the migration is complete for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+The condition should show `True` status for both API servers with a message indicating all resources are encrypted with aescbc.
+
+. Verify all resources are re-encrypted with local keys:
++
+[source,terminal]
+----
+$ oc get secrets --all-namespaces -o json | \
+  jq -r '.items[] | select(.metadata.annotations["encryption.kubernetes.io/state"] != null) | .metadata.name + " - " + .metadata.annotations["encryption.kubernetes.io/state"]'
+----
++
+All secrets should show `encrypted` status.
+
+. After migration completes, remove the KMS plugin static pods from all control plane nodes:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# rm /etc/kubernetes/manifests/kms-plugin.yaml
+----
++
+Repeat for each control plane node.
+
+. Verify the KMS plugin pods are terminated:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system | grep kms-plugin
+----
++
+No pods should be listed.
+
+. Optionally, disable the `TechPreviewNoUpgrade` feature gate if you no longer need Technology Preview features:
++
+[source,terminal]
+----
+$ oc patch featuregate cluster --type merge -p '
+{
+  "spec": {
+    "featureSet": "Default"
+  }
+}'
+----
++
+This re-enables cluster upgrades.
+
+Verify the encryption type is set to aescbc:
+
+. Check the encryption type setting:
++
+[source,terminal]
+----
+$ oc get apiserver cluster -o jsonpath='{.spec.encryption.type}'
+----
++
+The output should show `aescbc`.
+
+. Create a test secret to verify local encryption:
++
+[source,terminal]
+----
+$ oc create secret generic local-encryption-test --from-literal=key=value -n default
+----
+
+. Verify the secret is encrypted in etcd:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# export ETCDCTL_API=3
+sh-4.4# CERT_FILE=$(ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.crt | head -n 1)
+sh-4.4# KEY_FILE=$(ls /etc/kubernetes/static-pod-resources/etcd-certs/secrets/etcd-all-certs/etcd-peer-*.key | head -n 1)
+sh-4.4# etcdctl get /kubernetes.io/secrets/default/local-encryption-test \
+  --endpoints=https://localhost:2379 \
+  --cacert=/etc/kubernetes/static-pod-resources/etcd-certs/configmaps/etcd-serving-ca/ca-bundle.crt \
+  --cert=$CERT_FILE \
+  --key=$KEY_FILE
+----
++
+The output should show encrypted data with the `k8s:enc:aescbc:v1:` prefix.
+
+. Delete the test secret:
++
+[source,terminal]
+----
+$ oc delete secret local-encryption-test -n default
+----
+
+[IMPORTANT]
+====
+Disabling KMS encryption requires that the KMS plugin is running and can communicate with the KMS provider.
+If the KMS provider is unavailable, you cannot migrate from KMS encryption.
+In this case, you must restore the cluster from an etcd backup taken before KMS encryption was enabled.
+====
+
+[NOTE]
+====
+After migrating to local encryption, you can upgrade the cluster.
+The `TechPreviewNoUpgrade` feature gate restriction is removed when you switch to the `Default` feature set.
+====

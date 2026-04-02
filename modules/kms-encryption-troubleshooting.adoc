@@ -1,0 +1,209 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: REFERENCE
+[id="kms-encryption-troubleshooting_{context}"]
+= Troubleshoot KMS encryption issues
+
+[role="_abstract"]
+When KMS encryption fails or degrades, you can use diagnostic steps to identify and resolve common issues with KMS plugin connectivity, authentication, and encryption operations.
+
+== Common KMS encryption issues
+
+.KMS encryption troubleshooting guide
+[cols="2,3,3,3",options="header"]
+|===
+|Symptom
+|Likely cause
+|Diagnostic steps
+|Resolution
+
+|KMS plugin pod not running
+|Static pod manifest missing or invalid
+|Check `/etc/kubernetes/manifests/` on control plane nodes
+|Deploy valid static pod manifest on all control plane nodes
+
+|KMS plugin socket not found
+|Plugin failed to start or create socket
+|Check KMS plugin logs: `oc logs -n kube-system <kms-plugin-pod>`
+|Verify socket directory exists and has correct permissions
+
+|KMSPluginDegraded condition is True
+|Cannot communicate with KMS provider
+|Test network connectivity: `curl <kms-provider-endpoint>`
+|Fix firewall rules, DNS resolution, or network routes
+
+|Authentication failures in plugin logs
+|Invalid or expired credentials
+|Verify credentials in plugin configuration
+|Update IAM role, managed identity, or AppRole credentials
+
+|API server fails to start after enabling KMS
+|KMS plugin not running on all control plane nodes
+|Check plugin status on each control plane node
+|Deploy KMS plugin on missing control plane nodes
+
+|Encryption stuck at in-progress
+|High resource count or slow KMS provider
+|Check migration progress for both API servers: `oc get openshiftapiserver -o json` and `oc get kubeapiserver -o json`
+|Wait for migration to complete or increase KMS provider capacity
+
+|Secrets show unencrypted status
+|Encryption migration did not complete
+|Verify `EncryptionCompleted` condition status
+|Trigger manual migration or check for migration errors
+
+|Timeout errors in kube-apiserver logs
+|High latency to KMS provider
+|Measure network latency: `ping <kms-provider-endpoint>`
+|Reduce network latency or increase timeout value
+
+|Key rotation fails
+|New key not available in KMS provider
+|Verify new key exists: AWS: `aws kms describe-key`, Azure: `az keyvault key show`, Vault: `vault read transit/keys/<key>`
+|Create new key in KMS provider and update plugin configuration
+
+|Cluster cannot be upgraded
+|TechPreviewNoUpgrade feature gate enabled
+|Check feature gate: `oc get featuregate cluster -o yaml`
+|Migrate to local encryption, disable feature gate, then upgrade
+|===
+
+== Diagnostic procedures
+
+=== Check KMS plugin connectivity
+
+. Verify the KMS plugin socket exists:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+sh-4.4# chroot /host
+sh-4.4# ls -l /var/run/kmsplugin/kms.sock
+----
+
+. Test network connectivity to the KMS provider:
++
+For AWS KMS:
++
+[source,terminal]
+----
+$ curl -v https://kms.<region>.amazonaws.com
+----
++
+For Azure Key Vault:
++
+[source,terminal]
+----
+$ curl -v https://<key-vault-name>.vault.azure.net
+----
++
+For HashiCorp Vault:
++
+[source,terminal]
+----
+$ curl -v https://<vault-address>:8200/v1/sys/health
+----
+
+. Check KMS plugin logs for connection errors:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms-plugin-pod-name> | grep -i error
+----
+
+=== Verify authentication
+
+For AWS KMS::
++
+Verify IAM role permissions:
++
+[source,terminal]
+----
+$ aws kms describe-key --key-id <kms-key-id>
+----
++
+If the command fails, the IAM role does not have sufficient permissions.
+
+For Azure Key Vault::
++
+Verify managed identity access:
++
+[source,terminal]
+----
+$ az keyvault key show --vault-name <key-vault-name> --name <key-name>
+----
++
+If the command fails, the managed identity does not have Key Vault access.
+
+For HashiCorp Vault::
++
+Verify AppRole authentication:
++
+[source,terminal]
+----
+$ vault login -method=approle role_id=<role-id> secret_id=<secret-id>
+vault read transit/encrypt/<key-name>
+----
++
+If authentication fails, update the AppRole credentials.
+
+=== Recover from KMS plugin failure
+
+If the KMS plugin becomes unavailable and the API server cannot decrypt data:
+
+. Restore KMS plugin connectivity as quickly as possible.
+The cluster will be unavailable until the KMS plugin is restored.
+
+. If the KMS provider is permanently unavailable, restore from an etcd backup taken before KMS encryption was enabled.
+
+. To prevent future failures, deploy the KMS provider with high availability and maintain backup KMS credentials.
+
+== Emergency recovery procedures
+
+=== Disable KMS encryption to restore cluster operation
+
+If you must disable KMS encryption to restore cluster functionality:
+
+. Ensure the KMS plugin is running and can communicate with the KMS provider.
+You cannot migrate from KMS encryption if the plugin is unavailable.
+
+. Migrate from KMS encryption to local encryption:
++
+[source,terminal]
+----
+$ oc patch apiserver cluster --type merge -p '
+{
+  "spec": {
+    "encryption": {
+      "type": "aescbc"
+    }
+  }
+}'
+----
+
+. Monitor migration progress for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.message}{"\n"}'
+----
+
+. After migration completes, remove the KMS plugin static pods from control plane nodes.
+
+[WARNING]
+====
+Disabling KMS encryption while the KMS provider is unavailable is not possible.
+If you cannot restore KMS provider access, you must restore the cluster from an etcd backup.
+====
+
+[IMPORTANT]
+====
+For production clusters, always deploy the KMS provider with high availability, maintain backup credentials, and test disaster recovery procedures regularly.
+====

@@ -1,0 +1,223 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-vault-provider-config_{context}"]
+= Configure HashiCorp Vault provider
+
+[role="_abstract"]
+You can configure the HashiCorp Vault provider to encrypt etcd data using Vault's transit secrets engine with AppRole or token-based authentication.
+
+.Prerequisites
+
+* You have access to a HashiCorp Vault instance with permissions to enable secrets engines and create policies.
+* You have deployed Vault with network connectivity from control plane nodes.
+* Control plane nodes can resolve the Vault hostname via DNS.
+
+.Procedure
+
+. Enable the Vault transit secrets engine:
++
+[source,terminal]
+----
+$ vault secrets enable transit
+----
+
+. Create an encryption key in the transit secrets engine:
++
+[source,terminal]
+----
+$ vault write -f transit/keys/etcd-encryption
+----
+
+. Create a Vault policy that allows encryption and decryption operations:
++
+[source,terminal]
+----
+$ vault policy write kms-plugin - <<EOF
+path "transit/encrypt/etcd-encryption" {
+  capabilities = ["update"]
+}
+
+path "transit/decrypt/etcd-encryption" {
+  capabilities = ["update"]
+}
+EOF
+----
+
+. Configure AppRole authentication for the KMS plugin:
++
+[source,terminal]
+----
+$ vault auth enable approle
+----
++
+[source,terminal]
+----
+$ vault write auth/approle/role/kms-plugin \
+  token_policies="kms-plugin" \
+  token_ttl=24h \
+  token_max_ttl=720h
+----
++
+[NOTE]
+====
+The token TTL values shown (24h TTL, 720h max TTL) are recommended for production deployments.
+Adjust these values based on your operational model and security requirements.
+Ensure the KMS plugin supports automatic token renewal to avoid authentication failures when tokens expire.
+If the plugin does not support automatic renewal, implement a process to rotate AppRole credentials before the max TTL is reached.
+====
+
+. Retrieve the AppRole role ID and secret ID:
++
+[source,terminal]
+----
+$ vault read auth/approle/role/kms-plugin/role-id
+----
++
+[source,terminal]
+----
+$ vault write -f auth/approle/role/kms-plugin/secret-id
+----
++
+Note the `role_id` and `secret_id` values for use in the KMS plugin configuration.
+
+. Create a static pod manifest for the Vault KMS plugin on each control plane node:
++
+[source,yaml]
+----
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kms-plugin
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  containers:
+  - name: vault-kms-plugin
+    image: ghcr.io/falcosuessgott/vault-kubernetes-kms:latest
+    command:
+    - /vault-kubernetes-kms
+    args:
+    - --listen=/var/run/kmsplugin/kms.sock
+    - --vault-addr=https://<vault-address>:8200
+    - --vault-mount=transit
+    - --vault-key-name=etcd-encryption
+    env:
+    - name: VAULT_ADDR
+      value: https://<vault-address>:8200
+    - name: VAULT_ROLE_ID
+      value: <role-id>
+    - name: VAULT_SECRET_ID
+      value: <secret-id>
+    - name: VAULT_SKIP_VERIFY
+      value: "false"
+    volumeMounts:
+    - name: kmsplugin
+      mountPath: /var/run/kmsplugin
+    - name: vault-ca
+      mountPath: /etc/vault/ca
+      readOnly: true
+    securityContext:
+      privileged: true
+  volumes:
+  - name: kmsplugin
+    hostPath:
+      path: /var/run/kmsplugin
+      type: DirectoryOrCreate
+  - name: vault-ca
+    hostPath:
+      path: /etc/pki/ca-trust/source/anchors
+      type: Directory
+  priorityClassName: system-node-critical
+----
++
+Replace `<vault-address>`, `<role-id>`, and `<secret-id>` with your Vault connection details.
+
+. For self-signed Vault certificates, add the Vault CA certificate to the control plane node's trusted CA bundle:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# cp <vault-ca-cert>.crt /etc/pki/ca-trust/source/anchors/
+----
++
+[source,terminal]
+----
+sh-4.4# update-ca-trust
+----
++
+Alternatively, set `VAULT_SKIP_VERIFY=true` in the plugin environment variables to skip TLS verification (not recommended for production).
+
+. Save the static pod manifest to `/etc/kubernetes/manifests/kms-plugin.yaml` on each control plane node.
+
+Verify the KMS plugin pod is running:
+
+. Check the KMS plugin pod status:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system | grep kms-plugin
+----
+
+. Check the KMS plugin logs for successful Vault connection:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms-plugin-pod-name>
+----
++
+Look for log messages indicating successful AppRole authentication and connection to Vault.
+
+. Test KMS plugin connectivity by checking the socket:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node-name>
+----
++
+[source,terminal]
+----
+sh-4.4# chroot /host
+----
++
+[source,terminal]
+----
+sh-4.4# ls -l /var/run/kmsplugin/kms.sock
+----
+
+If the KMS plugin fails to connect to Vault, check the following:
+
+AppRole authentication:: Verify the role ID and secret ID are correct and the AppRole role has the required policy attached.
+
+Network connectivity:: Ensure control plane nodes can reach the Vault server on port 8200 (or your configured port). Check firewall rules and DNS resolution.
+
+Transit secrets engine:: Verify the transit secrets engine is enabled at the correct mount path and the encryption key exists.
+
+TLS certificates:: If using self-signed certificates, ensure the Vault CA certificate is in the trusted CA bundle or set `VAULT_SKIP_VERIFY=true`.
+
+Token expiration:: If using token authentication instead of AppRole, verify the token has not expired and has the required policy.
+
+Vault policy:: Ensure the policy grants `update` permissions on `transit/encrypt/<key-name>` and `transit/decrypt/<key-name>` paths.
+
+[NOTE]
+====
+For production deployments, use AppRole authentication with short-lived tokens instead of static tokens.
+Configure token renewal in the KMS plugin to avoid authentication failures due to token expiration.
+====
+
+[IMPORTANT]
+====
+HashiCorp Vault is well-suited for disconnected and on-premise deployments where cloud-based KMS providers are not accessible.
+Ensure Vault is deployed with high availability to prevent cluster failures if Vault becomes unavailable.
+====

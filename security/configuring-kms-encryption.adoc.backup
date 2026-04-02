@@ -1,0 +1,42 @@
+:_mod-docs-content-type: ASSEMBLY
+[id="configuring-kms-encryption"]
+= Configuring Kubernetes KMS encryption
+include::_attributes/common-attributes.adoc[]
+:context: configuring-kms-encryption
+
+toc::[]
+
+Kubernetes Key Management Service (KMS) encryption provides an additional layer of security for sensitive cluster data stored in etcd by integrating with external key management systems. With KMS v2, you can use external key management providers to encrypt and decrypt data encryption keys (DEKs) used to protect etcd data.
+
+// Understanding KMS encryption
+include::modules/kms-encryption-about.adoc[leveloffset=+1]
+
+// Supported KMS providers
+include::modules/kms-supported-providers.adoc[leveloffset=+1]
+
+// Prerequisites for configuring KMS
+include::modules/kms-encryption-prerequisites.adoc[leveloffset=+1]
+
+// Configuring KMS v2 encryption
+include::modules/kms-v2-configuring.adoc[leveloffset=+1]
+
+// Verifying KMS v2 encryption
+include::modules/kms-v2-verifying.adoc[leveloffset=+1]
+
+// Rotating KMS encryption keys
+include::modules/kms-encryption-key-rotation.adoc[leveloffset=+1]
+
+// Troubleshooting KMS encryption
+include::modules/kms-encryption-troubleshooting.adoc[leveloffset=+1]
+
+// Disabling KMS encryption
+include::modules/kms-encryption-disabling.adoc[leveloffset=+1]
+
+[role="_additional-resources"]
+.Additional resources
+
+* xref:../etcd/etcd-encrypt.adoc#etcd-encrypt[Enabling etcd encryption]
+
+* link:https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/[Kubernetes documentation - Using a KMS provider for data encryption]
+
+* link:https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/[Kubernetes documentation - Encrypting Secret Data at Rest]

@@ -1,0 +1,121 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: REFERENCE
+[id="kms-v2-tech-preview-limitations_{context}"]
+= Technology Preview limitations for KMS encryption
+
+[role="_abstract"]
+KMS encryption in {product-title} {ocp-nplus1} is available as a Technology Preview feature with specific limitations.
+Future General Availability releases will add managed plugin lifecycle, automatic key rotation, and removal of upgrade restrictions.
+
+== Tech Preview v1 limitations
+
+The Technology Preview implementation of KMS encryption includes the following limitations:
+
+Static endpoint only:: The KMS plugin socket path is hard-coded to `unix:///var/run/kmsplugin/kms.sock` on control plane nodes.
+Dynamic endpoint configuration is not supported in this release.
+
+Manual plugin deployment:: You must manually deploy the KMS plugin as a static pod or systemd unit on each control plane node.
+There is no operator-managed lifecycle for KMS plugins.
+
+No automatic key rotation:: Automatic key rotation with background re-encryption is not available.
+You must perform manual key rotation by updating the KMS provider key and triggering migration.
+
+TechPreviewNoUpgrade feature gate:: The `TechPreviewNoUpgrade` feature gate blocks cluster upgrades and downgrades while KMS encryption is enabled.
+You must migrate to local encryption before upgrading.
+
+No KMS-to-KMS migration:: You cannot migrate directly from one KMS provider to another.
+You must migrate to local encryption first, then migrate to a different KMS provider.
+
+No health check preconditions:: The cluster does not block operations during KMS plugin failures.
+API server degradation occurs immediately if the plugin becomes unavailable.
+
+Limited provider support:: Only AWS KMS, Azure Key Vault, and HashiCorp Vault are tested.
+Other KMS v2 plugins may work but are not officially supported.
+
+== Planned GA features
+
+Future General Availability releases will include the following enhancements:
+
+.Planned GA feature improvements
+[cols="2,3",options="header"]
+|===
+|Feature
+|Description
+
+|Managed plugin lifecycle
+|Operator-deployed and managed KMS plugins with automatic updates and health monitoring
+
+|Automatic key rotation
+|Background re-encryption of DEKs with new KEKs on a configurable schedule
+
+|Dynamic key ID fetching
+|Retrieve the active key identifier from the KMS plugin status endpoint instead of static configuration
+
+|KMS-to-KMS migration
+|Direct migration between different KMS providers without intermediate local encryption step
+
+|Health check preconditions
+|Block cluster operations when KMS plugin health checks fail to prevent API server failures
+
+|Removal of upgrade restriction
+|Support cluster upgrades while KMS encryption is enabled
+|===
+
+== Comparison of Tech Preview v1 and planned GA features
+
+.Tech Preview v1 versus GA feature comparison
+[cols="2,2,3",options="header"]
+|===
+|Feature
+|Tech Preview v1
+|Planned GA
+
+|KMS plugin deployment
+|Manual (static pod or systemd)
+|Operator-managed
+
+|KMS plugin endpoint
+|Static path
+|Dynamic configuration
+
+|Key rotation
+|Manual only
+|Automatic with background re-encryption
+
+|Cluster upgrades
+|Blocked by TechPreviewNoUpgrade gate
+|Supported with KMS encryption enabled
+
+|KMS provider migration
+|Requires intermediate local encryption
+|Direct KMS-to-KMS migration
+
+|Health checks
+|None
+|Precondition checks before operations
+
+|Supported providers
+|AWS, Azure, Vault
+|AWS, Azure, Vault, GCP, IBM Cloud
+|===
+
+== Migration requirements for upgrades
+
+To upgrade a cluster with KMS encryption enabled in Tech Preview:
+
+. Migrate from KMS encryption to local encryption (aescbc)
+. Verify all resources are re-encrypted with local keys
+. Perform cluster upgrade
+. Optionally migrate back to KMS encryption after upgrade completes
+
+This migration requirement will be removed in the GA release.
+
+[IMPORTANT]
+====
+Technology Preview features are not supported with Red Hat production service level agreements (SLAs) and might not be functionally complete.
+Red Hat does not recommend using them in production.
+These features provide early access to upcoming product features, enabling customers to test functionality and provide feedback during the development process.
+====

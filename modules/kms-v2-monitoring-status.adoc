@@ -1,0 +1,162 @@
+// Module included in the following assemblies:
+//
+// * security/configuring-kms-encryption.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-v2-monitoring-status_{context}"]
+= Monitor KMS encryption health
+
+[role="_abstract"]
+You can monitor KMS plugin health and encryption status using APIServer operator conditions, KMS plugin logs, and encryption metrics.
+
+.Prerequisites
+
+* You have configured KMS encryption.
+* You have access to the cluster as a user with the `cluster-admin` role.
+
+.Procedure
+
+. Check the KMS plugin degradation status for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="KMSPluginDegraded")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="KMSPluginDegraded")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+A `False` status indicates the KMS plugin is healthy.
+A `True` status indicates the plugin is degraded or unavailable.
+
+. Monitor encryption migration progress for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.reason}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionMigrationControllerProgressing")]}{.status}{" - "}{.reason}{" - "}{.message}{"\n"}'
+----
++
+This shows whether encryption migration is in progress or completed.
+
+. Check the encryption completion status for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionCompleted")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+A `True` status indicates all resources are encrypted.
+
+. Review KMS plugin logs for errors or warnings:
++
+[source,terminal]
+----
+$ oc logs -n kube-system <kms-plugin-pod-name> --tail=100
+----
++
+Look for error messages indicating connection failures, authentication issues, or timeout errors.
+
+. Verify KMS plugin pods are running on all control plane nodes:
++
+[source,terminal]
+----
+$ oc get pods -n kube-system -l app=kms-plugin -o wide
+----
++
+Each control plane node should have a running KMS plugin pod.
+
+. Check kube-apiserver logs for KMS-related errors:
++
+[source,terminal]
+----
+$ oc logs -n openshift-kube-apiserver <kube-apiserver-pod-name> | grep -i kms
+----
++
+Look for error messages indicating KMS plugin communication failures or timeout errors.
+
+. Monitor encryption controller degradation for both API servers:
++
+[source,terminal]
+----
+$ oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionControllerDegraded")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+[source,terminal]
+----
+$ oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="EncryptionControllerDegraded")]}{.status}{" - "}{.message}{"\n"}'
+----
++
+A `True` status indicates the encryption controller is experiencing issues.
+
+Set up monitoring alerts for KMS plugin failures by monitoring APIServer operator conditions using kube-state-metrics:
+
+. Create a PrometheusRule to alert on KMS plugin degradation:
++
+[source,yaml]
+----
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kms-plugin-alerts
+  namespace: openshift-monitoring
+spec:
+  groups:
+  - name: kms-plugin
+    interval: 30s
+    rules:
+    - alert: KMSPluginDegraded
+      expr: |
+        kube_customresource_status_condition{customresource_group="operator.openshift.io",customresource_kind="OpenShiftAPIServer",condition="KMSPluginDegraded",status="true"} == 1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KMS plugin is degraded"
+        description: "The KMS plugin has been degraded for more than 5 minutes. Check KMS plugin pod status and logs."
+    - alert: KMSPluginPodsNotReady
+      expr: |
+        count(kube_pod_status_phase{namespace="kube-system",pod=~"kms-plugin.*",phase="Running"}) < count(kube_node_info{node=~".*master.*"})
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KMS plugin pods are not running on all control plane nodes"
+        description: "KMS plugin deployment is incomplete. Ensure KMS plugin pods are running on all control plane nodes."
+----
+
+. Verify the alert rules are loaded:
++
+[source,terminal]
+----
+$ oc get prometheusrule -n openshift-monitoring kms-plugin-alerts
+----
+
+[NOTE]
+====
+Monitor KMS plugin health continuously in production environments.
+KMS plugin failures prevent the API server from encrypting and decrypting data, which can result in cluster outages.
+====
+
+[IMPORTANT]
+====
+Set up alerts for the following conditions:
+
+* `KMSPluginDegraded` status is `True`
+* `EncryptionControllerDegraded` status is `True`
+* KMS plugin pods are not running on all control plane nodes
+* High latency or timeout errors in KMS plugin logs
+
+These conditions indicate potential issues that require immediate attention to prevent cluster failures.
+====
