@@ -1,0 +1,160 @@
+// Module included in the following assemblies:
+//
+// * authentication/structured-auth-config-fields.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="structured-auth-config-cel-claim-mapping_{context}"]
+= Configuring CEL expressions for username and groups claim mapping
+
+[role="_abstract"]
+You can use Common Expression Language (CEL) expressions to construct usernames and groups from JWT token claims. This provides flexible claim mapping, including fallback logic when specific claims are not present.
+
+.Prerequisites
+
+* You have configured an external OIDC identity provider for direct authentication.
+* You have access to the cluster as a user with the `cluster-admin` role.
+* You have access to a long-lived authentication method, such as a certificate-based kubeconfig file.
+* You are familiar with CEL expression syntax.
+
+.Procedure
+
+[IMPORTANT]
+====
+When using `expression`, do not set the `claim` field. You must use either `claim` or `expression`, but not both.
+====
+
+. Create a YAML file named `authentication-cel-mapping.yaml` with your CEL expression configuration:
++
+[source,yaml]
+----
+apiVersion: config.openshift.io/v1
+kind: Authentication
+metadata:
+  name: cluster
+spec:
+  type: OIDC
+  oidcProviders:
+  - name: my-oidc-provider
+    issuer:
+      issuerURL: https://idp.example.com
+      audiences:
+      - my-audience
+    claimMappings:
+      username:
+        expression: 'claims.?upn.orValue(claims.?oid.orValue(claims.sub))'
+        prefixPolicy: Prefix
+        prefix:
+          prefixString: 'oidc:'
+      groups:
+        expression: 'claims.?groups.orValue([])'
+        prefix: 'oidc-groups:'
+----
++
+where:
++
+`username.expression`:: Fallback logic: `upn` if present, else `oid`, else `sub`.
+`groups.expression`:: Uses `groups` claim if present, else empty array.
++
+[NOTE]
+====
+Replace the placeholder values (`my-oidc-provider`, `https://idp.example.com`, `my-audience`) with your actual OIDC provider configuration.
+====
+
+. Apply the configuration:
++
+[source,terminal]
+----
+$ oc apply -f authentication-cel-mapping.yaml
+----
+
+.Verification
+
+* Verify that the authentication configuration is applied successfully:
++
+[source,terminal]
+----
+$ oc get authentication.config.openshift.io/cluster -o yaml
+----
+
+* Authenticate with a user account and verify the username is constructed correctly:
++
+[source,terminal]
+----
+$ oc whoami
+----
+
+* Monitor the cluster authentication operator status:
++
+[source,terminal]
+----
+$ oc get clusteroperator authentication
+----
++
+The operator should report `Available=True` and `Degraded=False`.
+
+You can use the following CEL expression patterns for claim mapping:
+
+Use the optional chaining operator `?` to safely access claims that might not exist::
++
+[source,yaml]
+----
+username:
+  expression: 'claims.?email.orValue(claims.sub)'
+----
++
+Uses `email` if present, otherwise `sub`.
+
+Concatenate multiple claims::
++
+[source,yaml]
+----
+username:
+  expression: 'claims.firstname + "." + claims.surname'
+----
++
+Combines first name and surname claims.
+
+Transform claim values::
++
+[source,yaml]
+----
+username:
+  expression: 'claims.email.lowerAscii()'
+----
++
+Converts email to lowercase.
+
+Conditional logic for different user types::
++
+[source,yaml]
+----
+username:
+  expression: 'has(claims.upn) ? claims.upn : claims.oid'
+----
++
+Uses `upn` for regular users, `oid` for service principals.
+
+Extract domain from email::
++
+[source,yaml]
+----
+groups:
+  expression: '[claims.email.split("@")[1]]'
+----
++
+Extracts domain from email address for group assignment.
+
+Combine group sources::
++
+[source,yaml]
+----
+groups:
+  expression: 'claims.?groups.orValue([]) + claims.?roles.orValue([])'
+----
++
+Combines `groups` and `roles` claims.
+
+[role="_additional-resources"]
+.Additional resources
+
+* link:https://github.com/google/cel-spec[Common Expression Language (CEL) specification]

@@ -24,6 +24,7 @@ include::modules/external-auth-configuring.adoc[leveloffset=+1]
 .Additional resources
 
 * xref:../authentication/external-auth.adoc#external-auth-cli_external-auth[Example OIDC provider configuration for CLI clients only]
+* xref:../authentication/structured-auth-config-fields.adoc#structured-auth-config-fields[Configuring advanced structured authentication fields] (Technology Preview)
 
 // OIDC provider configuration parameters
 include::modules/external-auth-fields.adoc[leveloffset=+2]
