@@ -1,0 +1,109 @@
+// Module included in the following assemblies:
+//
+// * etcd/KMS_v2/kms-configuring.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-configuring_{context}"]
+= Enabling KMS encryption
+
+[role="_abstract"]
+Enable external Key Management Service (KMS) encryption for etcd data to centralize key management and meet compliance requirements.
+
+.Prerequisites
+
+* You have access to the cluster as a user with the `cluster-admin` role.
+* You have enabled the `TechPreviewNoUpgrade` feature set to enable the `KMSEncryption` feature gate.
+* You have a KMS v2-compatible plugin available.
+* You have valid authentication credentials for your KMS provider.
+* Your control plane nodes have network access to the external KMS.
+
+[IMPORTANT]
+====
+Create an etcd backup before enabling KMS encryption.
+====
+
+.Procedure
+
+. Deploy the KMS plugin on each control plane host as a static pod or systemd unit:
++
+* Configure the plugin to listen at `unix:///var/run/kmsplugin/kms.sock`
+* Ensure `/var/run/kmsplugin` is accessible to API server pods
+* Configure KMS provider connection details and authentication credentials
+
+. Verify the KMS plugin is running on all control plane nodes:
++
+[source,terminal]
+----
+$ oc get pods -n openshift-kube-apiserver | grep kms
+----
++
+Verify one plugin pod runs on each control plane node.
+
+. Edit the APIServer custom resource:
++
+[source,terminal]
+----
+$ oc edit apiserver cluster
+----
+
+. Add the KMS configuration to the `spec.encryption` section:
++
+[source,yaml]
+----
+apiVersion: config.openshift.io/v1
+kind: APIServer
+metadata:
+  name: cluster
+spec:
+  encryption:
+    type: KMS
+----
+
+. Save and exit.
++
+Migration begins automatically. The `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`, and `etcd` operators will restart and roll out new revisions. This typically takes several minutes.
+
+.Verification
+
+. Verify the encryption type:
++
+[source,terminal]
+----
+$ oc get apiserver cluster -o jsonpath='{.spec.encryption.type}'
+----
++
+Output should show `KMS`.
+
+. Verify secrets are encrypted in etcd:
++
+--
+.. Create a test secret:
++
+[source,terminal]
+----
+$ oc create secret generic test-secret --from-literal=key=value -n default
+----
+
+.. Get an etcd pod name:
++
+[source,terminal]
+----
+$ oc get pods -n openshift-etcd -l app=etcd -o name | head -1
+----
+
+.. Check the secret data in etcd:
++
+[source,terminal]
+----
+$ oc exec -n openshift-etcd <etcd-pod-name> -- etcdctl get /kubernetes.io/secrets/default/test-secret --print-value-only | hexdump -C | head -1
+----
++
+Output should begin with `k8s:enc:kms:v2:` followed by encrypted binary data.
+
+.. Delete the test secret:
++
+[source,terminal]
+----
+$ oc delete secret test-secret -n default
+----
+--

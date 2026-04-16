@@ -1,0 +1,174 @@
+// Module included in the following assemblies:
+//
+// * etcd/KMS_v2/kms-configuring.adoc
+
+:_mod-docs-content-type: PROCEDURE
+[id="kms-deploying-plugin-daemonset_{context}"]
+= Deploying a KMS plugin by using a DaemonSet
+
+[role="_abstract"]
+Deploy a HashiCorp Vault KMS plugin as a DaemonSet on control plane nodes to enable external key management for etcd encryption.
+
+.Prerequisites
+
+* You have access to the cluster as a user with the `cluster-admin` role.
+* You have a HashiCorp Vault instance with network access from control plane nodes.
+* You have enabled the `TechPreviewNoUpgrade` feature set.
+
+.Procedure
+
+. Enable the Vault Transit secrets engine and create an encryption key:
++
+[source,terminal]
+----
+$ vault secrets enable transit
+$ vault write -f transit/keys/kms-key
+----
+
+. Create a Vault policy for the KMS plugin:
++
+[source,terminal]
+----
+$ vault policy write kms-policy - <<EOF
+path "transit/encrypt/kms-key" {
+  capabilities = ["update"]
+}
+path "transit/decrypt/kms-key" {
+  capabilities = ["update"]
+}
+EOF
+----
+
+. Configure Kubernetes authentication in Vault:
++
+[source,terminal]
+----
+$ vault auth enable kubernetes
+$ vault write auth/kubernetes/config \
+  kubernetes_host="https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT" \
+  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+----
+
+. Create a Vault role for the KMS plugin:
++
+[source,terminal]
+----
+$ vault write auth/kubernetes/role/kms-role \
+  bound_service_account_names=vault-kms-plugin \
+  bound_service_account_namespaces=openshift-kube-apiserver \
+  policies=kms-policy \
+  ttl=1h
+----
+
+. Create a service account for the Vault KMS plugin:
++
+[source,terminal]
+----
+$ oc create serviceaccount vault-kms-plugin -n openshift-kube-apiserver
+----
+
+. Create a DaemonSet to deploy the Vault KMS plugin on control plane nodes:
++
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vault-kms-plugin
+  namespace: openshift-kube-apiserver
+spec:
+  selector:
+    matchLabels:
+      app: vault-kms-plugin
+  template:
+    metadata:
+      labels:
+        app: vault-kms-plugin
+    spec:
+      serviceAccountName: vault-kms-plugin
+      hostNetwork: true
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/master
+        operator: Exists
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+      containers:
+      - name: vault-kms-plugin
+        image: <vault-kms-plugin-image>
+        args:
+        - --vault-addr=https://vault.vault.svc:8200
+        - --vault-mount=transit
+        - --vault-transit-key-name=kms-key
+        - --vault-role=kms-role
+        - --listen=/var/run/kmsplugin/kms.sock
+        - --debug
+        volumeMounts:
+        - name: socket-dir
+          mountPath: /var/run/kmsplugin
+        - name: sa-token
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+        securityContext:
+          privileged: true
+      volumes:
+      - name: socket-dir
+        hostPath:
+          path: /var/run/kmsplugin
+          type: DirectoryOrCreate
+      - name: sa-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600
+              audience: vault
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+----
++
+--
+where:
+
+`<vault-kms-plugin-image>`:: Replace with the Vault KMS plugin image. See link:https://developer.hashicorp.com/vault/docs/deploy/kubernetes/kms[HashiCorp Vault KMS Provider for Kubernetes] for the latest image and configuration details.
+`https://vault.vault.svc:8200`:: Update with your Vault server address.
+`kms-key`:: Matches the Transit key name created in step 1.
+`privileged`:: Set to `true` to access the host socket path.
+--
+
+. Apply the DaemonSet:
++
+[source,terminal]
+----
+$ oc apply -f vault-kms-plugin-daemonset.yaml
+----
+
+.Verification
+
+. Verify the plugin pods are running on all control plane nodes:
++
+[source,terminal]
+----
+$ oc get pods -n openshift-kube-apiserver -l app=vault-kms-plugin
+----
++
+Verify one plugin pod runs on each control plane node.
+
+. Verify the plugin socket is accessible:
++
+[source,terminal]
+----
+$ oc debug node/<control-plane-node> -- chroot /host ls -la /var/run/kmsplugin/kms.sock
+----
+
+.Additional resources
+
+* link:https://developer.hashicorp.com/vault/docs/deploy/kubernetes/kms[HashiCorp Vault KMS Provider for Kubernetes]
+* link:https://developer.hashicorp.com/vault/docs/secrets/transit[HashiCorp Vault Transit Secrets Engine]
+* link:https://developer.hashicorp.com/vault/docs/auth/kubernetes[Vault Kubernetes Auth Method]
