@@ -27,15 +27,19 @@ Create an etcd backup before enabling KMS encryption.
 . Deploy the KMS plugin on each control plane host as a static pod or systemd unit:
 +
 * Configure the plugin to listen at `unix:///var/run/kmsplugin/kms.sock`
-* Ensure `/var/run/kmsplugin` is accessible to API server pods
+* If using a static pod, mount `/var/run/kmsplugin` as hostPath
 * Configure KMS provider connection details and authentication credentials
 
 . Verify the KMS plugin is running on all control plane nodes:
 +
 [source,terminal]
 ----
-$ oc get pods -n openshift-kube-apiserver | grep kms
+$ oc get pods -n <kms_namespace> | grep kms
 ----
++
+.Where:
++
+<kms_namespace>:: Specifies the namespace where you deployed the KMS plugin.
 +
 Verify one plugin pod runs on each control plane node.
 
@@ -61,7 +65,7 @@ spec:
 
 . Save and exit.
 +
-Migration begins automatically. The `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`, and `etcd` operators will restart and roll out new revisions. This typically takes several minutes.
+Migration begins automatically. The `kube-apiserver`, `openshift-apiserver` and `oauth-apiserver` operators will restart and roll out new revisions. This typically takes several minutes.
 
 .Verification
 
