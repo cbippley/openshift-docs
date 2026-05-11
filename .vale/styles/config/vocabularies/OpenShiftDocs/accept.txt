@@ -12,7 +12,9 @@
 [Tt]elco
 [Uu]npause
 Assisted Installer
+ClusterObjectSets?
 Control Plane Machine Set Operator
+[Dd]eployment [Cc]onfigurations?
 GHz
 gpsd
 gpspipe

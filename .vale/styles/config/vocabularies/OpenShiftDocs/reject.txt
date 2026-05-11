@@ -2,7 +2,6 @@
 # Add terms that have a corresponding correctly capitalized form to accept.txt.
 
 [Dd]eployment [Cc]onfigs?
-[Dd]eployment [Cc]onfigurations?
 [Oo]peratorize
 [Ss]ingle [Nn]ode OpenShift
 [Tt]hree [Nn]ode OpenShift
